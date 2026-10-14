@@ -7,7 +7,8 @@ name: ios
 #   ・dev_cert=true       : Apple Development 証明書を1枚作って包む(ubuntu・1回だけ。docs/ios.md「署名」)
 #   鍵(ASC_*・APPLE_TEAM_ID・IOS_DEV_CERT_*)は GitHub の Environment「testflight」(ccf・hub-ios と同じ名前)。値はここに書かない。
 #   App Store Connect にアプリ(bundle id com.yusukedoi.bunrisaistaff)が無いと、下ごしらえの段で分かる文面を出して止まる。
-#   このアプリは秘密を焼き込まない(ログインは Web 側の画面・Cookie は端末の中だけ)。
+#   管理者パスワード(secret BUNRI_ADMIN_PASSWORD)は、testflight の archive の直前に Config/secrets.xcconfig(.gitignore 済み)へ16進で書き、
+#   Info.plist 経由でアプリに入る。値入りのビルド(.app・.ipa・xcarchive)は artifact に上げない=このワークフローに upload-artifact を足さない(build の失敗ログだけ)。
 
 on:
   workflow_dispatch:
@@ -49,6 +50,7 @@ jobs:
           sudo xcode-select -s "$x"
           xcodebuild -version
           command -v xcodegen || brew install xcodegen
+          printf 'BUNRI_ADMIN_PASSWORD_HEX =\n' > Config/secrets.xcconfig   # 未署名ビルドにログイン情報は入れない(空のまま)
           xcodegen generate
       - name: Simulator
         run: |
@@ -152,6 +154,22 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --quiet 'pyjwt[crypto]'
           "$RUNNER_TEMP/venv/bin/python" scripts/testflight_group.py
+      - name: ログイン情報を焼き込む(secret があるときだけ・git には入れない)
+        if: env.CAN_UPLOAD == 'true'
+        env:
+          ADMIN_PASSWORD: ${{ secrets.BUNRI_ADMIN_PASSWORD }}
+        run: |
+          set +x
+          umask 077
+          if [ -z "$ADMIN_PASSWORD" ]; then
+            echo "::error::BUNRI_ADMIN_PASSWORD が無い。ログインできないアプリを配らないよう、ここで止める"
+            exit 1
+          fi
+          # xcconfig は「//」「$」を特別に扱うので、16 進にして渡す(アプリ側で戻す)。値は表示しない。
+          hex=$(printf '%s' "$ADMIN_PASSWORD" | od -An -tx1 | tr -d ' \n')
+          printf 'BUNRI_ADMIN_PASSWORD_HEX = %s\n' "$hex" > Config/secrets.xcconfig
+          unset ADMIN_PASSWORD hex
+          echo "ログイン情報: 入れた"
       # 自動署名の archive は、手元に鍵付きの Development 証明書が無いと毎回新しく作ってしまう(チームの上限に達する)。
       # 1枚だけ作って secret に置いたものを一時キーチェーンに入れて使う。配布の署名は export でクラウド管理の Distribution 証明書。
       - name: Development 証明書を一時キーチェーンに入れる
@@ -190,9 +208,9 @@ jobs:
           set +x
           log="$RUNNER_TEMP/archive.log"
           if [ "$CAN_UPLOAD" = true ]; then
-            xcodebuild archive -project BunriStaff.xcodeproj -scheme BunriStaff -configuration Release -destination 'generic/platform=iOS' -archivePath build/BunriStaff.xcarchive -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" CURRENT_PROJECT_VERSION="$BUILD" > "$log" 2>&1 || { grep -E 'error:' "$log" | tail -40; exit 1; }
+            xcodebuild archive -project BunriStaff.xcodeproj -scheme BunriStaff -configuration Release -destination 'generic/platform=iOS' -archivePath build/BunriStaff.xcarchive -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" CURRENT_PROJECT_VERSION="$BUILD" > "$log" 2>&1 || { grep -E 'error:' "$log" | grep -v -e BUNRI_ADMIN_PASSWORD -e StaffAdminPassword | tail -40; exit 1; }
           else
-            xcodebuild archive -project BunriStaff.xcodeproj -scheme BunriStaff -configuration Release -destination 'generic/platform=iOS' -archivePath build/BunriStaff.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' CURRENT_PROJECT_VERSION="$BUILD" > "$log" 2>&1 || { grep -E 'error:' "$log" | tail -40; exit 1; }
+            xcodebuild archive -project BunriStaff.xcodeproj -scheme BunriStaff -configuration Release -destination 'generic/platform=iOS' -archivePath build/BunriStaff.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' CURRENT_PROJECT_VERSION="$BUILD" > "$log" 2>&1 || { grep -E 'error:' "$log" | grep -v -e BUNRI_ADMIN_PASSWORD -e StaffAdminPassword | tail -40; exit 1; }
           fi
           grep -E '\*\* ARCHIVE' "$log" || true
           # 自動署名が新しい Development 証明書を作っていないか(作っていれば、どこかのキーチェーンに2枚目が入る)
@@ -218,4 +236,4 @@ jobs:
         if: always()
         run: |
           [ -n "${KEYCHAIN_PATH:-}" ] && security delete-keychain "$KEYCHAIN_PATH" || true
-          rm -rf "$RUNNER_TEMP/dev.p12" "$RUNNER_TEMP/asc" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log" "$RUNNER_TEMP/venv" build/BunriStaff.xcarchive
+          rm -rf "$RUNNER_TEMP/dev.p12" "$RUNNER_TEMP/asc" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log" "$RUNNER_TEMP/venv" Config/secrets.xcconfig build/BunriStaff.xcarchive

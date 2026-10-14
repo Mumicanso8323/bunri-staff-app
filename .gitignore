@@ -6,3 +6,4 @@ build-test/
 *.xcresult
 *.log
 Config/secrets.xcconfig
+ios/Config/secrets.xcconfig

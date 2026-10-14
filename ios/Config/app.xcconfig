@@ -1,0 +1,3 @@
+// 既定は空(ログイン情報なし)。CI の testflight ジョブと手元は、同じフォルダの secrets.xcconfig(.gitignore 済み)が上書きする。
+BUNRI_ADMIN_PASSWORD_HEX =
+#include? "secrets.xcconfig"

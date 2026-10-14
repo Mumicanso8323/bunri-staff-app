@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 生成される Info.plist(INFOPLIST_KEY_*)に足す分。ビルド時に CI の secret から入る(git に値は入れない)。空なら自動ログインしない -->
+	<key>StaffAdminPasswordHex</key>
+	<string>$(BUNRI_ADMIN_PASSWORD_HEX)</string>
+</dict>
+</plist>
