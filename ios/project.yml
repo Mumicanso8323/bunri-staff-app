@@ -1,0 +1,61 @@
+name: BunriStaff
+options:
+  bundleIdPrefix: com.yusukedoi
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: ja
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  BunriStaff:
+    type: application
+    platform: iOS
+    sources:
+      - path: BunriStaff
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusukedoi.bunrisaistaff
+        PRODUCT_NAME: BunriStaff
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "文理祭ビンゴ運営"
+        INFOPLIST_KEY_NSCameraUsageDescription: "来場者のスマートフォンに出た QR コードを読み取って、景品の受け取りを確認するために、カメラを使います。"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Automatic
+          DEVELOPMENT_TEAM: "$(STAFF_TEAM_ID)"
+
+  BunriStaffTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: BunriStaffTests
+    dependencies:
+      - target: BunriStaff
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusukedoi.bunrisaistaff.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  BunriStaff:
+    build:
+      targets:
+        BunriStaff: all
+    test:
+      config: Debug
+      targets:
+        - BunriStaffTests

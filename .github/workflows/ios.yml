@@ -1,0 +1,221 @@
+name: ios
+
+# 起動は手動だけ(macOS の費用を抑える)。push・PR では何も走らない。
+# 使い分け(同じ起動で build と testflight は同時に走らない):
+#   ・何も選ばない        : build = XcodeGen → 単体テスト(ナビゲーション判定など。UI テストは無い)→ 未署名 Release ビルド
+#   ・testflight=true     : testflight = Release で archive → App Store Connect へ(内部グループ「文理祭委員」)。テストは回さない(先に上の形で1回回す)
+#   ・dev_cert=true       : Apple Development 証明書を1枚作って包む(ubuntu・1回だけ。docs/ios.md「署名」)
+#   鍵(ASC_*・APPLE_TEAM_ID・IOS_DEV_CERT_*)は GitHub の Environment「testflight」(ccf・hub-ios と同じ名前)。値はここに書かない。
+#   App Store Connect にアプリ(bundle id com.yusukedoi.bunrisaistaff)が無いと、下ごしらえの段で分かる文面を出して止まる。
+#   このアプリは秘密を焼き込まない(ログインは Web 側の画面・Cookie は端末の中だけ)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: 'TestFlight へ上げる(選んだブランチを配る。テストは回さない)'
+        type: boolean
+        default: false
+      dev_cert:
+        description: 'archive 用の Apple Development 証明書を1枚作り、recipient の公開鍵で包んで artifact に置く(1回だけ・docs/ios.md「署名」)'
+        type: boolean
+        default: false
+      recipient:
+        description: 'dev_cert のとき: hub で作った受け取り用の公開鍵(PEM)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: ios
+
+jobs:
+  build:
+    if: ${{ !inputs.dev_cert && !inputs.testflight }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Xcode and XcodeGen
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$x"
+          xcodebuild -version
+          command -v xcodegen || brew install xcodegen
+          xcodegen generate
+      - name: Simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in sorted(d.items(), reverse=True) if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
+          echo "UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+      - name: Test (unit)
+        run: |
+          set -o pipefail
+          xcodebuild test -project BunriStaff.xcodeproj -scheme BunriStaff -destination "id=$UDID" -derivedDataPath build-test CODE_SIGNING_ALLOWED=NO > test.log 2>&1 || { grep -E 'error:|failed|Failing|XCTAssert|Undefined symbol' test.log | tail -120; exit 1; }
+          grep -E '\*\* TEST|Executed|passed|failed' test.log | tail -40
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-log
+          path: ios/test.log
+          retention-days: 3
+      - name: Build unsigned (Release)
+        run: |
+          set -o pipefail
+          xcodebuild build -project BunriStaff.xcodeproj -scheme BunriStaff -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' > build.log 2>&1 || { grep -B2 -A8 'error:' build.log | head -160; exit 1; }
+          grep -E '\*\* BUILD' build.log
+
+  dev-cert:
+    if: ${{ inputs.dev_cert }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testflight
+    steps:
+      - uses: actions/checkout@v5
+      - name: Apple Development 証明書を1枚作って包む
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          RECIPIENT: ${{ inputs.recipient }}
+        run: |
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/asc" sealed
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/key.p8"
+          printf '%s\n' "$RECIPIENT" > "$RUNNER_TEMP/recipient.pem"
+          openssl pkey -pubin -in "$RUNNER_TEMP/recipient.pem" -noout || { echo "::error::recipient が公開鍵(PEM)ではない"; exit 1; }
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet 'pyjwt[crypto]'
+          ASC_KEY_PATH="$RUNNER_TEMP/asc/key.p8" "$RUNNER_TEMP/venv/bin/python" scripts/signing_cert.py create "$RUNNER_TEMP/recipient.pem" sealed/dev-cert.sealed.json
+          rm -rf "$RUNNER_TEMP/asc"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dev-cert-sealed
+          path: ios/sealed/dev-cert.sealed.json
+          retention-days: 1
+
+
+  testflight:
+    if: ${{ inputs.testflight && !inputs.dev_cert }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    environment: testflight
+    concurrency:
+      group: testflight
+      cancel-in-progress: false
+    env:
+      CAN_UPLOAD: ${{ secrets.ASC_KEY_ID != '' && secrets.ASC_ISSUER_ID != '' && secrets.ASC_KEY_P8 != '' && secrets.APPLE_TEAM_ID != '' }}
+      STAFF_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build number
+        run: |
+          build=$(printf '%d%02d' "${{ github.run_number }}" "${{ github.run_attempt }}")
+          echo "BUILD=$build" >> "$GITHUB_ENV"
+      - name: Xcode and XcodeGen
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$x"
+          command -v xcodegen || brew install xcodegen
+          xcodegen generate
+      - name: Put signing key in temporary storage
+        if: env.CAN_UPLOAD == 'true'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/key.p8"
+          chmod 600 "$RUNNER_TEMP/asc/key.p8"
+          test -s "$RUNNER_TEMP/asc/key.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/asc/key.p8" >> "$GITHUB_ENV"
+      - name: App Store Connect の下ごしらえ(アプリの有無・内部グループ「文理祭委員」・テスター)
+        if: env.CAN_UPLOAD == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          TESTER_EMAIL: ${{ secrets.STAFF_TESTER_EMAIL }}
+          BUNDLE_ID: com.yusukedoi.bunrisaistaff
+          GROUP_NAME: 文理祭委員
+        run: |
+          set +x
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet 'pyjwt[crypto]'
+          "$RUNNER_TEMP/venv/bin/python" scripts/testflight_group.py
+      # 自動署名の archive は、手元に鍵付きの Development 証明書が無いと毎回新しく作ってしまう(チームの上限に達する)。
+      # 1枚だけ作って secret に置いたものを一時キーチェーンに入れて使う。配布の署名は export でクラウド管理の Distribution 証明書。
+      - name: Development 証明書を一時キーチェーンに入れる
+        if: env.CAN_UPLOAD == 'true'
+        env:
+          P12: ${{ secrets.IOS_DEV_CERT_P12 }}
+          P12_PASS: ${{ secrets.IOS_DEV_CERT_PASSWORD }}
+        run: |
+          set +x
+          umask 077
+          if [ -z "$P12" ] || [ -z "$P12_PASS" ]; then
+            echo "::error::IOS_DEV_CERT_P12 / IOS_DEV_CERT_PASSWORD が無い。毎回証明書を作らないよう、ここで止める(docs/ios.md「署名」の下ごしらえを1回)"
+            exit 1
+          fi
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kcpass=$(openssl rand -hex 24)
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/dev.p12"
+          curl -fsSL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o "$RUNNER_TEMP/wwdr.cer"
+          security import "$RUNNER_TEMP/wwdr.cer" -k "$kc" -T /usr/bin/codesign >/dev/null 2>&1 || true
+          security import "$RUNNER_TEMP/dev.p12" -k "$kc" -f pkcs12 -P "$P12_PASS" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          rm -f "$RUNNER_TEMP/dev.p12" "$RUNNER_TEMP/wwdr.cer"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpass" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          n=$(security find-identity -v -p codesigning "$kc" | grep -c 'Apple Development' || true)
+          [ "$n" -ge 1 ] || { echo "::error::secret の証明書が署名に使えない(期限切れ・失効の可能性)"; exit 1; }
+          echo "KEYCHAIN_PATH=$kc" >> "$GITHUB_ENV"
+          echo "Development 証明書: 一時キーチェーンに入れた"
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set +x
+          log="$RUNNER_TEMP/archive.log"
+          if [ "$CAN_UPLOAD" = true ]; then
+            xcodebuild archive -project BunriStaff.xcodeproj -scheme BunriStaff -configuration Release -destination 'generic/platform=iOS' -archivePath build/BunriStaff.xcarchive -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" CURRENT_PROJECT_VERSION="$BUILD" > "$log" 2>&1 || { grep -E 'error:' "$log" | tail -40; exit 1; }
+          else
+            xcodebuild archive -project BunriStaff.xcodeproj -scheme BunriStaff -configuration Release -destination 'generic/platform=iOS' -archivePath build/BunriStaff.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' CURRENT_PROJECT_VERSION="$BUILD" > "$log" 2>&1 || { grep -E 'error:' "$log" | tail -40; exit 1; }
+          fi
+          grep -E '\*\* ARCHIVE' "$log" || true
+          # 自動署名が新しい Development 証明書を作っていないか(作っていれば、どこかのキーチェーンに2枚目が入る)
+          if [ "$CAN_UPLOAD" = true ]; then
+            n=$(security find-identity -v -p codesigning | grep -c 'Apple Development' || true)
+            if [ "$n" -gt 1 ]; then echo "::warning::archive が新しい Development 証明書を作った可能性がある($n 枚)"; else echo "Development 証明書は secret の1枚だけ"; fi
+          fi
+      - name: Export and upload
+        if: env.CAN_UPLOAD == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set +x
+          plist="$RUNNER_TEMP/ExportOptions.plist"
+          plutil -create xml1 "$plist"
+          /usr/libexec/PlistBuddy -c 'Add :method string app-store-connect' "$plist"
+          /usr/libexec/PlistBuddy -c 'Add :destination string upload' "$plist"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $STAFF_TEAM_ID" "$plist"
+          xcodebuild -exportArchive -archivePath build/BunriStaff.xcarchive -exportOptionsPlist "$plist" -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" > "$RUNNER_TEMP/export.log" 2>&1 || { grep -E 'error:' "$RUNNER_TEMP/export.log" | tail -40; exit 1; }
+          grep -E '\*\* EXPORT' "$RUNNER_TEMP/export.log" || true
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          [ -n "${KEYCHAIN_PATH:-}" ] && security delete-keychain "$KEYCHAIN_PATH" || true
+          rm -rf "$RUNNER_TEMP/dev.p12" "$RUNNER_TEMP/asc" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log" "$RUNNER_TEMP/venv" build/BunriStaff.xcarchive

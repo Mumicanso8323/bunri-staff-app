@@ -1,0 +1,8 @@
+DerivedData/
+build/
+build-test/
+*.xcodeproj
+.DS_Store
+*.xcresult
+*.log
+Config/secrets.xcconfig
