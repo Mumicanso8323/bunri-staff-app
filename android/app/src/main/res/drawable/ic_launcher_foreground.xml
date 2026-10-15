@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 5x5 のビンゴ札(中央の1マスと斜めを白抜き) -->
+    <path android:fillColor="#FFFFFF" android:pathData="M30,30h48v48h-48z" />
+    <path android:fillColor="#1E4FA8" android:pathData="M32,32h8.4v8.4h-8.4z M43.2,32h8.4v8.4h-8.4z M54.4,32h8.4v8.4h-8.4z M65.6,32h8.4v8.4h-8.4z M32,43.2h8.4v8.4h-8.4z M54.4,43.2h8.4v8.4h-8.4z M65.6,43.2h8.4v8.4h-8.4z M32,54.4h8.4v8.4h-8.4z M43.2,54.4h8.4v8.4h-8.4z M65.6,54.4h8.4v8.4h-8.4z M32,65.6h8.4v8.4h-8.4z M43.2,65.6h8.4v8.4h-8.4z M54.4,65.6h8.4v8.4h-8.4z" />
+    <path android:fillColor="#E8A200" android:pathData="M43.2,43.2h8.4v8.4h-8.4z M54.4,54.4h8.4v8.4h-8.4z M65.6,65.6h8.4v8.4h-8.4z M43.2,65.6h0z" />
+</vector>

@@ -1,0 +1,38 @@
+name: android
+
+# 単体テストと、パスワード無しの release APK(未署名)のビルド。手動起動と android/ の変更で動く。
+# 管理者パスワード入りの APK はここでは作らない(リポジトリが public で、artifact は誰でも落とせるため)。
+# 配る APK は hub で android/scripts/build_release.sh が作る。
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 単体テスト
+        run: ./gradlew --console=plain :app:testDebugUnitTest
+      - name: 未署名 release のビルド(パスワード無し)
+        run: ./gradlew --console=plain :app:assembleRelease
+      - name: テスト結果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-report
+          path: android/app/build/reports/tests/testDebugUnitTest
