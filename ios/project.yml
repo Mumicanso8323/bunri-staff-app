@@ -27,7 +27,7 @@ targets:
         PRODUCT_NAME: BunriStaff
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: Config/Info.plist
-        INFOPLIST_KEY_CFBundleDisplayName: "文理祭ビンゴ運営"
+        INFOPLIST_KEY_CFBundleDisplayName: "文理祭運営"
         INFOPLIST_KEY_NSCameraUsageDescription: "来場者のスマートフォンに出た QR コードを読み取って、景品の受け取りを確認するために、カメラを使います。"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

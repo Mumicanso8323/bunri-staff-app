@@ -171,7 +171,7 @@ actor AdminAPI {
         return result
     }
 
-    private func json(_ method: String, _ path: String, query: [URLQueryItem] = [], body: [String: String]? = nil) -> URLRequest {
+    private func json(_ method: String, _ path: String, query: [URLQueryItem] = [], body: [String: Any]? = nil) -> URLRequest {
         var components = URLComponents(url: url(path), resolvingAgainstBaseURL: true)!
         if !query.isEmpty { components.queryItems = query }
         var request = URLRequest(url: components.url!)
@@ -212,7 +212,26 @@ actor AdminAPI {
         }
     }
 
+    /// トーナメントの状態(ログイン不要)。ETag つき。
+    func tournament(etag: String?) async throws -> TournamentSnapshotResult {
+        var request = json("GET", "api/tournament/state")
+        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        let (data, response) = try await perform(request)
+        switch response.statusCode {
+        case 304: return .notModified
+        case 200: return .changed(try decode(TournamentSnapshot.self, data), etag: response.value(forHTTPHeaderField: "ETag"))
+        default: throw fail(response, data)
+        }
+    }
+
     // MARK: 管理 API
+
+    /// トーナメントの1操作(`POST api/admin/tournament`)。400 の error には、サーバーの日本語の理由が入る。
+    func tournamentOp(_ op: [String: Any]) async throws -> TournamentSnapshot {
+        let (data, response) = try await authed { json("POST", "api/admin/tournament", body: op) }
+        guard response.statusCode == 200 else { throw fail(response, data) }
+        return try decode(TournamentSnapshot.self, data)
+    }
 
     func createSession() async throws -> BingoSession {
         let (data, response) = try await authed { json("POST", "api/admin/bingo/session") }

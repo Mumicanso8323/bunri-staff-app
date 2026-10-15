@@ -1,6 +1,6 @@
-# 文理祭ビンゴ運営(iOS アプリ)
+# 文理祭運営(iOS アプリ)
 
-表示名「文理祭ビンゴ運営」、bundle id `com.yusukedoi.bunrisaistaff`(変えない)、iOS 17 以上。文理祭(2026-10-18 日 14:55〜 ビンゴ本番)の委員だけが使う。配布は TestFlight の内部テスター(App Store Connect のチームのメンバー)のみ。審査には出さない。
+表示名「文理祭運営」(ビンゴとサークル対抗戦トーナメントを扱う)、bundle id `com.yusukedoi.bunrisaistaff`(変えない)、iOS 17 以上。文理祭(2026-10-18 日 14:55〜 ビンゴ本番)の委員だけが使う。配布は TestFlight の内部テスター(App Store Connect のチームのメンバー)のみ。審査には出さない。
 手本は ccf-companion(置き卓通知)。XcodeGen・GitHub Actions(macOS)・内部グループの用意の形を揃えてある。hub に Xcode は無いので、ここでは Swift を書くだけでビルドはしていない。
 
 ## 作り(ネイティブ)
@@ -10,6 +10,7 @@ WebView ではなく SwiftUI の画面で、Web 版と同じ API を URLSession 
   - 立て直し: 終了後に「終了を取り消す(同じセッションを再開)」(確認つき)。`PATCH session {status:"active"}` で同じセッションを進行中に戻す。番号と参加者は残る(Web 画面には無い操作だが、API は `waiting|active|finished` を受ける=`bingo/session/route.ts`)。
   - 「新しいセッション」は、既存の全セッションを終了して新しい待機中を作る(`createSession`)。参加者は前のセッションに紐づいたままなので、claim は `stale_session` で通らない=景品の対象外。間違えた終了の立て直しには使わない。
   - 状態は `GET /api/bingo/state` を 2.5 秒ごとにポーリング(`If-None-Match`、304 は何もしない)。画面が前面のときだけ。
+- タブ「トーナメント」(`TournamentModel/View.swift`、`TournamentModels.swift` に型と勝ち上がりの解決=`src/lib/tournament.ts` の `resolve` の写し): `GET /api/tournament/state`(ETag・2.5 秒ポーリング)で表を回戦ごと(上のセグメント)に見る。各試合でチームのボタンを押す → 確認(「〇〇の勝ちにしますか?」。決着済みの試合の付け替えは後続が消える旨)→ `POST /api/admin/tournament {action:"win",round,match,team}`。ほかに「勝者を取り消す」(`unwin`)・「1手戻す」(`undo`・確認つき)・「いまの試合にする/解除」(`current`/`clearCurrent`)・最下部の赤い「リセット」(`reset`・確認つき)。サーバーが 400 で返す理由(日本語)はそのまま帯に出す。チーム入れ替え・枠・回戦名(`setTeams`/`setSlots`/`labels`)は Web 管理画面で行う(アプリには無い)。
 - タブ「QR確認」: AVFoundation で QR を読む → `GET admin/bingo/player?guest=<UUID>` → 結果を大きく表示 →(ビンゴ達成かつ未受取のとき)「景品受取済みにする」→ `POST admin/bingo/claim`。「次を読む」で再開。表示中は読み取りを止める。カメラが使えない/読めないときのために、ID の手入力欄もある。
   - QR の中身は `https://<host>/admin/bingo/verify?player=<UUID>`(`components/bingo/bingo-result.tsx`)。UUID の形でなければ API を呼ばずに「無効な QR」。
   - **指示との違い**: 読んだだけでは claim せず、「景品受取済みにする」を1回押してから claim する(Web の verify 画面と同じ。claim は取り消せないので、渡す前に記録してしまうのを避ける)。読んだら即 claim にしたければ `VerifyModel.handle` の `.readyToClaim` の分岐で `claim` を呼ぶだけ。
@@ -41,10 +42,10 @@ WebView ではなく SwiftUI の画面で、Web 版と同じ API を URLSession 
 下の `<owner>/<repo>` は GitHub のリポジトリ(例 Mumicanso8323/bunri-staff-app)。値は表示しない。
 1. **GitHub リポジトリ**: `gh repo create <owner>/<repo> --private --source /data/ashwell/bunri-staff-app --push`(private 推奨)。
 2. **Apple Developer に Bundle ID**: `com.yusukedoi.bunrisaistaff` を登録(ccf は ASC API の `POST /v1/bundleIds`・platform IOS で登録した。capability 追加なし。Developer サイトの Identifiers からでも可)。
-3. **App Store Connect にアプリ**(本人の1操作・API では作れない): https://appstoreconnect.apple.com/apps →「+」→「新規 App」: プラットフォーム iOS・名前「文理祭ビンゴ運営」・言語 日本語・バンドル ID `com.yusukedoi.bunrisaistaff`・SKU `bunrisai-staff`・ユーザアクセス「アクセス制限なし」。
+3. **App Store Connect にアプリ**(本人の1操作・API では作れない): https://appstoreconnect.apple.com/apps →「+」→「新規 App」: プラットフォーム iOS・名前「文理祭運営」・言語 日本語・バンドル ID `com.yusukedoi.bunrisaistaff`・SKU `bunrisai-staff`・ユーザアクセス「アクセス制限なし」。
 4. **Environment「testflight」**(リポジトリの Settings → Environments)に secret。ccf・hub-ios と同じ値を使う: `ASC_KEY_ID`・`ASC_ISSUER_ID`・`ASC_KEY_P8`・`APPLE_TEAM_ID`。このアプリ専用に `BUNRI_ADMIN_PASSWORD`(Web 側の ADMIN_PASSWORD と同じ値・無いと testflight ジョブが止まる)。任意で `STAFF_TESTER_EMAIL`(内部グループに入れる人のメール。カンマ区切りで複数)。値はチャットに貼らない(`gh secret set --env testflight` で hub の既存の控えから流すか、本人が画面で入れる)。
 5. **署名の証明書**(`IOS_DEV_CERT_P12`・`IOS_DEV_CERT_PASSWORD`): ccf の docs/ios.md「署名」と同じ。チームで共有の1枚を、このリポジトリの Environment にも置く(ccf で作った p12 を再利用するのが、証明書を増やさない)。新規に作るなら 1) hub: `python3 ios/scripts/signing_cert.py keypair <一時フォルダ>` 2) `gh workflow run ios -R <owner>/<repo> --ref main -f dev_cert=true -f recipient="$(cat <一時フォルダ>/recipient.pem)"` 3) `gh run download <run> -n dev-cert-sealed -D <一時フォルダ>` → `python3 ios/scripts/signing_cert.py install <一時フォルダ> <一時フォルダ>/dev-cert.sealed.json <owner>/<repo>` で secret を置き、手元の鍵と包みを消す。
 6. **先にテスト**: `gh workflow run ios -R <owner>/<repo> --ref main`(何も選ばない)→ 単体テストと未署名ビルドが通ることを確かめる。ここで Swift の書き間違いが出たら直す。
 7. **TestFlight へ**: `gh workflow run ios -R <owner>/<repo> --ref main -f testflight=true`。下ごしらえが内部グループ「文理祭委員」(全ビルド自動配布)を用意し、`STAFF_TESTER_EMAIL` の人を入れる。Apple の処理に 10〜30 分。
-8. **委員の招待**: 内部テスターは App Store Connect の「ユーザとアクセス」に入っている人だけ。委員を「ユーザ」として招待(役割は「マーケティング」か「開発者」など最小で足りる。「App Store Connect へのアクセス」だけでよい)→ 本人がメールの招待を承諾 → グループ「文理祭委員」に追加(`STAFF_TESTER_EMAIL` で入るのは招待承諾済みの人だけ。409 で保留になった人は TestFlight 画面から足す)→ 各自が TestFlight アプリで「文理祭ビンゴ運営」をインストール。人数が多いなら、ユーザ招待は本人の判断(外向き)。
+8. **委員の招待**: 内部テスターは App Store Connect の「ユーザとアクセス」に入っている人だけ。委員を「ユーザ」として招待(役割は「マーケティング」か「開発者」など最小で足りる。「App Store Connect へのアクセス」だけでよい)→ 本人がメールの招待を承諾 → グループ「文理祭委員」に追加(`STAFF_TESTER_EMAIL` で入るのは招待承諾済みの人だけ。409 で保留になった人は TestFlight 画面から足す)→ 各自が TestFlight アプリで「文理祭運営」をインストール。人数が多いなら、ユーザ招待は本人の判断(外向き)。
 9. **当日の前に**: 上の「確かめられていないこと」を実機で。

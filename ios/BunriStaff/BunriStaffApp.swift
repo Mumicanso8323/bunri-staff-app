@@ -9,12 +9,13 @@ struct BunriStaffApp: App {
     }
 }
 
-private enum StaffTab: Hashable { case lottery, verify, guide }
+private enum StaffTab: Hashable { case lottery, tournament, verify, guide }
 
 struct RootView: View {
     @State private var tab: StaffTab = .lottery
     @State private var loginProblem: String?
     @StateObject private var lottery: LotteryModel
+    @StateObject private var tournament: TournamentModel
     @StateObject private var verify: VerifyModel
     private let api: AdminAPI
 
@@ -22,6 +23,7 @@ struct RootView: View {
         let api = AdminAPI(passwordProvider: { Credentials.adminPassword })
         self.api = api
         _lottery = StateObject(wrappedValue: LotteryModel(api: api))
+        _tournament = StateObject(wrappedValue: TournamentModel(api: api))
         _verify = StateObject(wrappedValue: VerifyModel(api: api))
     }
 
@@ -30,6 +32,9 @@ struct RootView: View {
             LotteryView(model: lottery)
                 .tabItem { Label("抽選", systemImage: "dice") }
                 .tag(StaffTab.lottery)
+            TournamentView(model: tournament)
+                .tabItem { Label("トーナメント", systemImage: "trophy") }
+                .tag(StaffTab.tournament)
             VerifyView(model: verify, isTabActive: tab == .verify)
                 .tabItem { Label("QR確認", systemImage: "qrcode.viewfinder") }
                 .tag(StaffTab.verify)
