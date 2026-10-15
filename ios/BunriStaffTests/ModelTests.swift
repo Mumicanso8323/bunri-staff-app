@@ -27,7 +27,7 @@ final class ModelTests: XCTestCase {
 
     private let qr = "https://bunrisai.jp/admin/bingo/verify?player=0f8fad5b-d9cb-469f-a165-70867728950e"
 
-    private func verifyModel(playerBody: String) -> VerifyModel {
+    @MainActor private func verifyModel(playerBody: String) -> VerifyModel {
         MockURLProtocol.handler = { [self] request in
             switch request.url!.path {
             case "/api/admin/login": return reply(303, "", login)
