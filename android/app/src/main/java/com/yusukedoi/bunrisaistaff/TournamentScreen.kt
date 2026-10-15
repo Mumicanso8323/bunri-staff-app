@@ -64,9 +64,13 @@ fun TournamentScreen(model: TournamentModel) {
             Box(Modifier.fillMaxWidth().padding(top = 60.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         } else {
             val bracket = state.bracket
-            val selected = (round ?: defaultRound(bracket)).coerceIn(0, bracket.rounds - 1)
+            val selected = (round ?: defaultRound(bracket, state)).coerceIn(0, bracket.rounds - 1)
 
             Text(state.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
+
+            if (!state.placementComplete) {
+                PlacePanel(state, busy = ui.busy, onPlace = { team -> model.place(team) }, onUndo = { confirmUndo = true })
+            }
 
             bracket.champion?.let { champion ->
                 Column(
@@ -139,13 +143,48 @@ fun TournamentScreen(model: TournamentModel) {
     }
     if (confirmReset) ConfirmDialog(
         title = "すべて初期状態に戻しますか?",
-        message = "チーム・勝ち上がり・回戦名・ゲーム名がすべて初期状態に戻ります。勝ち上がりも消えます。",
+        message = "チーム一覧・回戦名・ゲーム名がすべて初期状態に戻り、組み合わせは空になります。勝ち上がりも消えます。",
         confirmLabel = "初期状態に戻す", destructive = true,
         onConfirm = { model.reset() }, onDismiss = { confirmReset = false },
     )
 }
 
-private fun defaultRound(bracket: Bracket): Int {
+/** 「抜けた順に入れる」。未配置のチームのボタンを押すと、次の空枠に入る(確認なし。間違えたら「1手戻す」) */
+@Composable
+private fun PlacePanel(state: TournamentState, busy: Boolean, onPlace: (String) -> Unit, onUndo: () -> Unit) {
+    val unplaced = state.unplacedTeams
+    Column(
+        Modifier.fillMaxWidth().background(Color(0xFF3F51B5).copy(alpha = 0.10f), RoundedCornerShape(14.dp)).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("抜けた順に入れる", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "配置 ${state.placedTeams.size} / ${state.allTeams.size}" + (state.nextEmptySlot?.let { "　次の枠:${state.slotLabel(it)}" } ?: ""),
+            fontSize = 14.sp,
+        )
+        if (unplaced.isEmpty()) {
+            Text("入れるチームの一覧がありません。ホールの管理画面で確かめてください。", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            for (team in unplaced) {
+                Button(
+                    onClick = { onPlace(team) },
+                    enabled = !busy,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3F51B5), contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Text(team, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        OutlinedButton(onClick = onUndo, enabled = !busy && state.canUndo, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)) {
+            Text("1手戻す", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+private fun defaultRound(bracket: Bracket, state: TournamentState): Int {
+    if (!state.placementComplete) return 0
     for (row in bracket.matches) {
         row.firstOrNull { it.ready && it.winner == null }?.let { return it.round }
     }
@@ -177,6 +216,7 @@ private fun MatchCard(
                 when {
                     mv.winner != null -> Text(if (mv.auto) "不戦勝" else "決着", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = StaffColors.Green)
                     mv.ready -> Text("勝者を選ぶ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    mv.a == Participant.Empty || mv.b == Participant.Empty -> Text("枠が空いている", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     else -> Text("前の試合待ち", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -232,6 +272,7 @@ private fun TeamRow(mv: MatchView, side: Participant, busy: Boolean, onPick: (St
             }
         }
         Participant.Pending -> Text("(前の試合の勝者)", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(top = 10.dp))
+        Participant.Empty -> Text("(空き枠)", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(top = 10.dp))
         Participant.None -> Text("シード(不戦勝)", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(top = 10.dp))
     }
 }

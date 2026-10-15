@@ -235,6 +235,22 @@ class ModelTest {
         assertEquals(null, api.etags.last())
     }
 
+    @Test fun tournamentPlaceSendsPlaceOpWithoutSlotAndUnknownActionIsJustAMessage() = runTest {
+        var sent: Map<String, Any?>? = null
+        val api = FakeApi().apply { tournamentOpResult = { op -> sent = op; tsnap(2) } }
+        val m = TournamentModel(api, this)
+        m.refresh()
+        m.place("T3"); advanceUntilIdle()
+        assertEquals("place", sent?.get("action"))
+        assertEquals("T3", sent?.get("team"))
+        assertFalse(sent!!.containsKey("slot"))          // 省略 = 次の空枠
+        // 新しい API が無いサーバー: 落ちず、サーバーの文が出るだけ
+        api.tournamentOpResult = { throw ApiException(ApiError.Server(400, "不明な操作です")) }
+        m.place("T4"); advanceUntilIdle()
+        assertEquals("不明な操作です", m.ui.value.message)
+        assertFalse(m.ui.value.busy)
+    }
+
     @Test fun tournamentBlocksDoubleSend() = runTest {
         val api = FakeApi().apply { gate = CompletableDeferred() }
         val m = TournamentModel(api, this)

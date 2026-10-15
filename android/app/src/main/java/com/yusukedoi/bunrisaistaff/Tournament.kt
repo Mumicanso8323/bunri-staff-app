@@ -6,7 +6,10 @@ import org.json.JSONObject
 
 data class TournamentState(
     val title: String,
-    /** 初戦の枠。null = シード(不戦勝)。長さは 8 か 16 */
+    /**
+     * 初戦の枠。長さは 8 か 16。
+     * チーム名 = 配置済み / null = シード(不戦勝) / "" = まだ埋まっていない枠(クイズで抜けた順に埋める)
+     */
     val slots: List<String?>,
     val roundNames: List<String>,
     val gameNames: List<String>,
@@ -15,8 +18,32 @@ data class TournamentState(
     /** いま行っている試合 "r-m" */
     val current: String?,
     val canUndo: Boolean,
+    /** 出場チームの一覧(配置の候補)。旧サーバーには無い */
+    val teams: List<String>? = null,
 ) {
     val bracket: Bracket get() = Bracket.resolve(slots, winners)
+
+    /** 配置済みのチーム名 */
+    val placedTeams: List<String> get() = slots.filterNotNull().filter { it.isNotEmpty() }
+
+    /** 出場チーム。teams が無い旧サーバーでは、配置済みのチームだけ */
+    val allTeams: List<String> get() = (teams ?: emptyList()) + placedTeams.filter { it !in (teams ?: emptyList()) }
+
+    /** まだ枠に入っていないチーム(teams の順) */
+    val unplacedTeams: List<String> get() { val placed = placedTeams.toSet(); return allTeams.filter { it !in placed } }
+
+    /** 次に入れる空枠(添字の小さい順)。無ければ null */
+    val nextEmptySlot: Int? get() = slots.indexOfFirst { it == "" }.takeIf { it >= 0 }
+
+    /** シード以外の枠がすべて埋まっている */
+    val placementComplete: Boolean get() = nextEmptySlot == null
+
+    /** 枠の言い方(「左ブロック 第2試合 下」) */
+    fun slotLabel(index: Int): String {
+        val half = maxOf(slots.size / 4, 1)
+        val m = index / 2
+        return "${if (m < half) "左" else "右"}ブロック 第${m % half + 1}試合 ${if (index % 2 == 0) "上" else "下"}"
+    }
 
     /** 回戦 r(0 起点・初戦が 0)の名前。決勝から数えて並んでいる roundNames の末尾側を使う。 */
     fun roundName(r: Int): String {
@@ -45,6 +72,7 @@ data class TournamentState(
                 winners = winners,
                 current = if (o.isNull("current")) null else o.optString("current"),
                 canUndo = o.optBoolean("canUndo", false),
+                teams = o.optJSONArray("teams")?.let { a -> List(a.length()) { a.optString(it, "") } },
             )
         }
     }
@@ -64,6 +92,8 @@ sealed interface Participant {
     data object Pending : Participant
     /** 不在(シード側の空き) */
     data object None : Participant
+    /** まだ誰も入っていない枠 */
+    data object Empty : Participant
 
     val teamName: String? get() = (this as? Team)?.name
 }
@@ -94,7 +124,7 @@ data class Bracket(val size: Int, val rounds: Int, val matches: List<List<MatchV
             while (s > 1) { s /= 2; rounds++ }
             rounds = maxOf(1, rounds)
             val matches = mutableListOf<List<MatchView>>()
-            var inputs: List<Participant> = slots.map { if (it == null) Participant.None else Participant.Team(it) }
+            var inputs: List<Participant> = slots.map { if (it == null) Participant.None else if (it.isEmpty()) Participant.Empty else Participant.Team(it) }
             for (r in 0 until rounds) {
                 val row = mutableListOf<MatchView>()
                 val next = mutableListOf<Participant>()
@@ -114,7 +144,8 @@ data class Bracket(val size: Int, val rounds: Int, val matches: List<List<MatchV
                     } else if (bn != null && a == Participant.None) {
                         winner = bn; auto = true
                     }
-                    val out: Participant = if (dead) Participant.None else (winner?.let { Participant.Team(it) } ?: Participant.Pending)
+                    val seedVsEmpty = (a == Participant.None && b == Participant.Empty) || (b == Participant.None && a == Participant.Empty)
+                    val out: Participant = if (dead) Participant.None else (winner?.let { Participant.Team(it) } ?: if (seedVsEmpty) Participant.Empty else Participant.Pending)
                     row += MatchView(r, m, a, b, winner, auto, an != null && bn != null, dead)
                     next += out
                 }

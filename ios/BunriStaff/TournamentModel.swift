@@ -64,6 +64,9 @@ final class TournamentModel: ObservableObject {
 
     func undo() async { await send(["action": "undo"]) }
 
+    /// 抜けたチームを次の空枠に入れる
+    func place(team: String) async { await send(["action": "place", "team": team]) }
+
     func setCurrent(round: Int, match: Int) async {
         await send(["action": "current", "round": round, "match": match])
     }

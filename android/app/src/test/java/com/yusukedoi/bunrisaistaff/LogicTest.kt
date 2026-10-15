@@ -92,4 +92,45 @@ class LogicTest {
         val blank = s.copy(roundNames = listOf("", "", "", ""))
         assertEquals("1回戦", blank.roundName(0))
     }
+
+    // 空の枠(抜けた順に入れる)。Web の tournament.ts と同じ規則
+
+    @Test fun emptySlotMakesMatchUnreadyAndSeedVsEmptyStaysEmpty() {
+        val slots = listOf("A", "", "", "", "", "", "", null)
+        val b = Bracket.resolve(slots, mapOf("0-0" to "A"))
+        assertEquals(Participant.Empty, b.matches[0][0].b)
+        assertFalse(b.matches[0][0].ready)
+        assertNull(b.matches[0][0].winner)               // 空き枠を含む試合は勝者を入れられない
+        assertEquals(Participant.Empty, b.matches[0][3].a)
+        assertEquals(Participant.None, b.matches[0][3].b)
+        assertNull(b.matches[0][3].winner)
+        assertEquals(Participant.Empty, b.matches[1][1].b)   // シードの相手が空きなら、勝ち上がりも空き
+        assertEquals(Participant.Pending, b.matches[1][0].a)
+    }
+
+    @Test fun placementHelpers() {
+        val s = TournamentState("t", listOf("A", "", "C", null, "", "", "", ""), listOf("", "", "", ""), listOf("", "", "", ""),
+            emptyMap(), null, true, teams = listOf("A", "B", "C", "D", "E", "F", "G"))
+        assertEquals(listOf("A", "C"), s.placedTeams)
+        assertEquals(listOf("B", "D", "E", "F", "G"), s.unplacedTeams)
+        assertEquals(1, s.nextEmptySlot)
+        assertFalse(s.placementComplete)
+        assertEquals("左ブロック 第1試合 下", s.slotLabel(1))
+        assertEquals("右ブロック 第1試合 下", s.slotLabel(5))
+        // teams の無い旧サーバー: 配置済みのチームだけ(落ちない)
+        val old = s.copy(teams = null)
+        assertEquals(emptyList<String>(), old.unplacedTeams)
+        val full = old.copy(slots = listOf("A", "B", "C", null, "E", "F", "G", "H"))
+        assertTrue(full.placementComplete)
+    }
+
+    @Test fun decodesTeamsAndEmptySlotsFromJson() {
+        val json = org.json.JSONObject("""{"title":"t","slots":["A","",null,"D","","","",""],"teams":["A","D","X"],
+            "roundNames":["","","",""],"gameNames":["","","",""],"winners":{},"current":null,"canUndo":false}""")
+        val s = TournamentState.fromJson(json)
+        assertEquals(listOf("A", "", null, "D", "", "", "", ""), s.slots)
+        assertEquals(listOf("A", "D", "X"), s.teams)
+        val legacy = org.json.JSONObject("""{"title":"t","slots":["A","B"],"roundNames":[],"gameNames":[],"winners":{},"current":null,"canUndo":false}""")
+        assertNull(TournamentState.fromJson(legacy).teams)
+    }
 }

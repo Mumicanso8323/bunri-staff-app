@@ -53,6 +53,9 @@ class TournamentModel(
 
     fun undo() = send(mapOf("action" to "undo"))
 
+    /** 抜けたチームを次の空枠に入れる */
+    fun place(team: String) = send(mapOf("action" to "place", "team" to team))
+
     fun setCurrent(round: Int, match: Int) = send(mapOf("action" to "current", "round" to round, "match" to match))
 
     fun clearCurrent() = send(mapOf("action" to "clearCurrent"))

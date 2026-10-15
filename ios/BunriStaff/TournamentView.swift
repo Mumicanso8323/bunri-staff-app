@@ -59,7 +59,7 @@ struct TournamentView: View {
             Button("初期状態に戻す", role: .destructive) { Task { await model.reset() } }
             Button("やめる", role: .cancel) {}
         } message: {
-            Text("チーム・勝ち上がり・回戦名・ゲーム名がすべて初期状態に戻ります。勝ち上がりも消えます。")
+            Text("チーム一覧・回戦名・ゲーム名がすべて初期状態に戻り、組み合わせは空になります。勝ち上がりも消えます。")
         }
     }
 
@@ -71,9 +71,11 @@ struct TournamentView: View {
 
     @ViewBuilder private func content(_ state: TournamentState) -> some View {
         let bracket = state.bracket
-        let selected = min(max(round ?? defaultRound(bracket), 0), bracket.rounds - 1)
+        let selected = min(max(round ?? defaultRound(bracket, state: state), 0), bracket.rounds - 1)
 
         Text(state.title).font(.title2.bold()).frame(maxWidth: .infinity, alignment: .leading)
+
+        if !state.placementComplete { placePanel(state) }
 
         if let champion = bracket.champion {
             VStack(spacing: 4) {
@@ -107,7 +109,42 @@ struct TournamentView: View {
         dangerZone
     }
 
-    private func defaultRound(_ bracket: Bracket) -> Int {
+    /// 「抜けた順に入れる」。未配置のチームのボタンを押すと、次の空枠に入る(確認なし。間違えたら「1手戻す」)
+    private func placePanel(_ state: TournamentState) -> some View {
+        let unplaced = state.unplacedTeams
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("抜けた順に入れる").font(.headline)
+            HStack {
+                Text("配置 \(state.placedTeams.count) / \(state.allTeams.count)").font(.subheadline)
+                if let next = state.nextEmptySlot {
+                    Text("次の枠:\(state.slotLabel(next))").font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            if unplaced.isEmpty {
+                Text("入れるチームの一覧がありません。ホールの管理画面で確かめてください。").font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                ForEach(unplaced, id: \.self) { team in
+                    Button {
+                        Task { await model.place(team: team) }
+                    } label: {
+                        Text(team).font(.headline).multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    }
+                    .buttonStyle(.borderedProminent).tint(.indigo).disabled(model.busy)
+                }
+            }
+            Button { confirmUndo = true } label: {
+                Text("1手戻す").font(.subheadline.bold()).frame(maxWidth: .infinity, minHeight: 40)
+            }
+            .buttonStyle(.bordered).tint(.orange).disabled(model.busy || !state.canUndo)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.indigo.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func defaultRound(_ bracket: Bracket, state: TournamentState) -> Int {
+        if !state.placementComplete { return 0 }
         for row in bracket.matches {
             if let mv = row.first(where: { $0.ready && $0.winner == nil }) { return mv.round }
         }
@@ -128,6 +165,8 @@ struct TournamentView: View {
                     Text(mv.auto ? "不戦勝" : "決着").font(.caption.bold()).foregroundStyle(.green)
                 } else if mv.ready {
                     Text("勝者を選ぶ").font(.caption).foregroundStyle(.secondary)
+                } else if mv.a == .empty || mv.b == .empty {
+                    Text("枠が空いている").font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text("前の試合待ち").font(.caption).foregroundStyle(.secondary)
                 }
@@ -183,6 +222,8 @@ struct TournamentView: View {
             }
         case .pending:
             Text("(前の試合の勝者)").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        case .empty:
+            Text("(空き枠)").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         case .none:
             Text("シード(不戦勝)").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }

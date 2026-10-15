@@ -137,4 +137,74 @@ final class TournamentTests: XCTestCase {
         XCTAssertTrue(undoRefused)
         XCTAssertEqual(model.message, "これ以上戻せません")
     }
+
+    // MARK: 空の枠(抜けた順に入れる)
+
+    private func placementJSON(slots: String, teams: String?) -> String {
+        let t = teams.map { "\"teams\":\($0)," } ?? ""
+        return """
+        {"state":{"title":"サークル対抗戦","slots":\(slots),\(t)
+         "roundNames":["1回戦","2回戦","3回戦(準決勝)","決勝"],"gameNames":["","","",""],
+         "winners":{},"current":null,"canUndo":true},"version":3,"updatedAt":"2026-10-17T01:30:00.000Z"}
+        """
+    }
+
+    func testEmptySlotMakesMatchUnreadyAndSeedVsEmptyStaysEmpty() {
+        // 初戦 0 試合目: A と空き / 3 試合目: 空きとシード
+        let b = Bracket.resolve(slots: ["A", "", "", "", "", "", "", nil].map { $0 }, winners: ["0-0": "A"])
+        XCTAssertEqual(b.matches[0][0].b, .empty)
+        XCTAssertFalse(b.matches[0][0].ready)
+        XCTAssertNil(b.matches[0][0].winner)          // 空き枠を含む試合は勝者を入れられない
+        XCTAssertEqual(b.matches[0][3].a, .empty)
+        XCTAssertEqual(b.matches[0][3].b, .none)
+        XCTAssertNil(b.matches[0][3].winner)
+        XCTAssertEqual(b.matches[1][1].b, .empty)     // シードの相手が空きなら、勝ち上がりも空き
+        XCTAssertEqual(b.matches[1][0].a, .pending)   // 空きを含む普通の試合は「前の試合待ち」
+    }
+
+    func testPlacementHelpersAndDecoding() throws {
+        let slots = #"["A","","C",null,"","","",""]"#
+        let snap = try JSONDecoder().decode(TournamentSnapshot.self, from: Data(placementJSON(slots: slots, teams: #"["A","B","C","D","E","F","G"]"#).utf8))
+        let s = snap.state
+        XCTAssertEqual(s.placedTeams, ["A", "C"])
+        XCTAssertEqual(s.unplacedTeams, ["B", "D", "E", "F", "G"])
+        XCTAssertEqual(s.nextEmptySlot, 1)
+        XCTAssertFalse(s.placementComplete)
+        XCTAssertEqual(s.slotLabel(1), "左ブロック 第1試合 下")
+        XCTAssertEqual(s.slotLabel(5), "右ブロック 第1試合 下")
+        // teams の無い旧サーバー: 配置済みのチームだけ(落ちない)
+        let old = try JSONDecoder().decode(TournamentSnapshot.self, from: Data(placementJSON(slots: slots, teams: nil).utf8))
+        XCTAssertNil(old.state.teams)
+        XCTAssertEqual(old.state.unplacedTeams, [])
+        // 全部埋まったらパネルは不要
+        let full = try JSONDecoder().decode(TournamentSnapshot.self, from: Data(placementJSON(slots: #"["A","B","C",null,"E","F","G","H"]"#, teams: nil).utf8))
+        XCTAssertTrue(full.state.placementComplete)
+    }
+
+    @MainActor func testPlacePostsPlaceOpAndUnknownActionIsJustAMessage() async {
+        var sentActions: [[String: Any]] = []
+        var serverKnowsPlace = true
+        MockURLProtocol.handler = { [self] request in
+            switch request.url!.path {
+            case "/api/admin/login": return reply(303, "", login)
+            case "/api/admin/tournament":
+                let sent = (try? JSONSerialization.jsonObject(with: Data(request.bodyString.utf8))) as? [String: Any] ?? [:]
+                sentActions.append(sent)
+                if !serverKnowsPlace { return reply(400, #"{"error":"不明な操作です"}"#) }
+                return reply(200, placementJSON(slots: #"["A","","","","","","",null]"#, teams: #"["A","B"]"#))
+            default:
+                return reply(200, placementJSON(slots: #"["A","","","","","","",null]"#, teams: #"["A","B"]"#), ["ETag": "\"tournament-3\""])
+            }
+        }
+        let model = TournamentModel(api: makeAPI())
+        await model.place(team: "A")
+        XCTAssertEqual(sentActions.first?["action"] as? String, "place")
+        XCTAssertEqual(sentActions.first?["team"] as? String, "A")
+        XCTAssertNil(sentActions.first?["slot"])      // 省略 = 次の空枠
+        XCTAssertEqual(model.state?.slots[0], "A")
+        // 新しい API が無いサーバー: 落ちず、サーバーの文が出るだけ
+        serverKnowsPlace = false
+        await model.place(team: "B")
+        XCTAssertEqual(model.message, "不明な操作です")
+    }
 }
