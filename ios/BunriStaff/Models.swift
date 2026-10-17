@@ -26,6 +26,15 @@ struct BingoSnapshot: Codable, Equatable {
     let playerCount: Int
     let bingoCount: Int
     let updatedAt: Double
+    /// 景品抽選で引いた景品番号(引いた順)。古いサーバーには無いので Optional。
+    let prizes: [Int]?
+    /// 景品の総数。古いサーバーには無い。
+    let prizeTotal: Int?
+
+    static let defaultPrizeTotal = 81
+
+    var prizeList: [Int] { prizes ?? [] }
+    var prizeCapacity: Int { prizeTotal ?? Self.defaultPrizeTotal }
 }
 
 struct PlayerView: Codable, Equatable {

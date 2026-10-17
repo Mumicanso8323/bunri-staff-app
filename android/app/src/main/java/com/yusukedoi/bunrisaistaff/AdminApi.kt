@@ -51,6 +51,17 @@ sealed interface DrawOutcome {
     data object NotFound : DrawOutcome
 }
 
+sealed interface PrizeOutcome {
+    data class Drawn(val result: DrawResult) : PrizeOutcome
+    data object Exhausted : PrizeOutcome    // 400: 景品を全部引いた(remaining が 0)
+    data object NotFound : PrizeOutcome
+}
+
+sealed interface PrizeUndoOutcome {
+    data class Undone(val number: Int?) : PrizeUndoOutcome    // 取り消せるものが無いときは null
+    data object NotFound : PrizeUndoOutcome
+}
+
 sealed interface PlayerLookup {
     data class Found(val player: PlayerView) : PlayerLookup
     data object NotFound : PlayerLookup
@@ -80,6 +91,8 @@ interface StaffApi {
     suspend fun createSession()
     suspend fun setStatus(sessionId: String, status: SessionStatus)
     suspend fun draw(sessionId: String): DrawOutcome
+    suspend fun drawPrize(sessionId: String): PrizeOutcome
+    suspend fun undoPrize(sessionId: String): PrizeUndoOutcome
     suspend fun player(guestId: String): PlayerLookup
     suspend fun claim(guestId: String, sessionId: String): ClaimOutcome
 }
@@ -223,6 +236,8 @@ class AdminApi(
 
     private fun errorCode(raw: Raw): String? = try { JSONObject(raw.body).optString("error").ifEmpty { null } } catch (_: Exception) { null }
 
+    private fun errorRemaining(raw: Raw): Int? = try { JSONObject(raw.body).takeIf { it.has("remaining") }?.getInt("remaining") } catch (_: Exception) { null }
+
     private fun errorPlayer(raw: Raw): PlayerView? = try { JSONObject(raw.body).optJSONObject("player")?.let(PlayerView::fromJson) } catch (_: Exception) { null }
 
     private fun fail(raw: Raw): ApiException = ApiException(ApiError.Server(raw.code, errorCode(raw)))
@@ -282,6 +297,27 @@ class AdminApi(
             raw.code == 404 -> DrawOutcome.NotFound
             raw.code == 409 -> DrawOutcome.NotActive
             raw.code == 400 && (errorCode(raw) ?: "").contains("75") -> DrawOutcome.Exhausted
+            else -> throw fail(raw)
+        }
+    }
+
+    /** 景品を1つ引く(`POST api/admin/bingo/prize`)。回の状態(待機中・進行中・終了)に関係なく引ける。 */
+    override suspend fun drawPrize(sessionId: String): PrizeOutcome {
+        val raw = authed { json("POST", "api/admin/bingo/prize", body = mapOf("sessionId" to sessionId, "action" to "draw")) }
+        return when {
+            raw.code == 200 -> PrizeOutcome.Drawn(decode(raw) { DrawResult(it.getInt("number"), it.getInt("remaining"), it.getInt("totalDrawn")) })
+            raw.code == 404 -> PrizeOutcome.NotFound
+            raw.code == 400 && errorRemaining(raw) == 0 -> PrizeOutcome.Exhausted
+            else -> throw fail(raw)
+        }
+    }
+
+    /** 最後に引いた景品を1つ取り消す(押し間違い用)。 */
+    override suspend fun undoPrize(sessionId: String): PrizeUndoOutcome {
+        val raw = authed { json("POST", "api/admin/bingo/prize", body = mapOf("sessionId" to sessionId, "action" to "undo")) }
+        return when (raw.code) {
+            200 -> PrizeUndoOutcome.Undone(decode(raw) { if (it.isNull("undone")) null else it.getInt("undone") })
+            404 -> PrizeUndoOutcome.NotFound
             else -> throw fail(raw)
         }
     }

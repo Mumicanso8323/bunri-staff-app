@@ -28,14 +28,22 @@ data class BingoSnapshot(
     val playerCount: Int,
     val bingoCount: Int,
     val updatedAt: Double,
+    /** その回で引いた景品番号(引いた順)。古いサーバーには無いので、無ければ空。 */
+    val prizes: List<Int> = emptyList(),
+    /** 景品の総数。古いサーバーには無いので、無ければ 81。 */
+    val prizeTotal: Int = DEFAULT_PRIZE_TOTAL,
 ) {
     companion object {
+        const val DEFAULT_PRIZE_TOTAL = 81
+
         fun fromJson(o: JSONObject): BingoSnapshot = BingoSnapshot(
             session = o.optJSONObject("session")?.let(BingoSession::fromJson),
             draws = o.getJSONArray("draws").ints(),
             playerCount = o.getInt("playerCount"),
             bingoCount = o.getInt("bingoCount"),
             updatedAt = o.getDouble("updatedAt"),
+            prizes = o.optJSONArray("prizes")?.ints() ?: emptyList(),
+            prizeTotal = o.optInt("prizeTotal", DEFAULT_PRIZE_TOTAL),
         )
     }
 }

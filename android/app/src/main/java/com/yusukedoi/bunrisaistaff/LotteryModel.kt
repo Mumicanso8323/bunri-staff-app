@@ -20,6 +20,15 @@ data class LotteryUi(
     val latestNumber: Int? get() = draws.lastOrNull()
     val remaining: Int get() = 75 - draws.size
 
+    val prizes: List<Int> get() = snapshot?.prizes ?: emptyList()
+    val prizeTotal: Int get() = snapshot?.prizeTotal ?: BingoSnapshot.DEFAULT_PRIZE_TOTAL
+    val latestPrize: Int? get() = prizes.lastOrNull()
+    val prizeRemaining: Int get() = (prizeTotal - prizes.size).coerceAtLeast(0)
+
+    /** 景品は回の状態に関係なく引ける(回があって、通信中でなく、残りがあるとき)。 */
+    val canDrawPrize: Boolean get() = session != null && !busy && prizeRemaining > 0
+    val canUndoPrize: Boolean get() = session != null && !busy && prizes.isNotEmpty()
+
     /** 状態に合うときだけ押せる。押した直後の約3秒と、通信中は押せない。 */
     val canDraw: Boolean get() = session?.status == SessionStatus.ACTIVE && !busy && !drawCooling && remaining > 0
 }
@@ -99,6 +108,73 @@ class LotteryModel(
             _ui.update { it.copy(busy = false, message = text) }
             refresh()
         }
+    }
+
+    /** 景品を1つ引く。番号を引くのとは独立(状態に関係なく押せる)。通信中は押せない。 */
+    fun drawPrize() {
+        val current = _ui.value
+        if (!current.canDrawPrize) return
+        val session = current.session ?: return
+        _ui.update { it.copy(busy = true, message = null) }
+        scope.launch {
+            var text: String? = null
+            try {
+                when (val outcome = api.drawPrize(session.id)) {
+                    is PrizeOutcome.Drawn -> {
+                        // 次の取得を待たずに、引いた番号を画面に出す。取得できたらサーバーの値に置き換わる。
+                        val n = outcome.result.number
+                        updatePrizes { if (n in it) it else it + n }
+                    }
+                    PrizeOutcome.Exhausted -> text = "景品は全部引き終わりました。"
+                    PrizeOutcome.NotFound -> text = "セッションが見つかりません。画面を確かめてください。"
+                }
+            } catch (e: ApiException) {
+                text = Messages.describe(e.error)
+                // 通信エラーでも、サーバー側では引けているかもしれない。
+                if (e.error == ApiError.Network) text += "引けたかどうかは、景品の「引いた数」で確かめてください。"
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                text = Messages.describe(ApiError.Network)
+            }
+            _ui.update { it.copy(busy = false, message = text) }
+            refresh()
+        }
+    }
+
+    /** 最後に引いた景品を1つ取り消す(押し間違い用)。確認は画面側で取る。 */
+    fun undoPrize() {
+        val current = _ui.value
+        if (!current.canUndoPrize) return
+        val session = current.session ?: return
+        _ui.update { it.copy(busy = true, message = null) }
+        scope.launch {
+            var text: String? = null
+            try {
+                when (val outcome = api.undoPrize(session.id)) {
+                    is PrizeUndoOutcome.Undone -> {
+                        val n = outcome.number
+                        if (n == null) {
+                            text = "取り消せる景品がありません。"
+                        } else {
+                            updatePrizes { list -> list.filter { it != n } }
+                        }
+                    }
+                    PrizeUndoOutcome.NotFound -> text = "セッションが見つかりません。画面を確かめてください。"
+                }
+            } catch (e: ApiException) {
+                text = Messages.describe(e.error)
+                if (e.error == ApiError.Network) text += "取り消せたかどうかは、景品の「引いた数」で確かめてください。"
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                text = Messages.describe(ApiError.Network)
+            }
+            _ui.update { it.copy(busy = false, message = text) }
+            refresh()
+        }
+    }
+
+    private fun updatePrizes(change: (List<Int>) -> List<Int>) {
+        _ui.update { ui -> ui.snapshot?.let { s -> ui.copy(snapshot = s.copy(prizes = change(s.prizes))) } ?: ui }
     }
 
     private fun run(action: suspend () -> Unit) {

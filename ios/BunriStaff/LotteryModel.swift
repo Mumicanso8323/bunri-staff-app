@@ -11,6 +11,7 @@ final class LotteryModel: ObservableObject {
     @Published private(set) var connected = true
     @Published private(set) var busy = false
     @Published private(set) var drawCooling = false
+    @Published private(set) var prizeCooling = false
     @Published var message: String?
 
     private var etag: String?
@@ -25,6 +26,17 @@ final class LotteryModel: ObservableObject {
 
     /// 状態に合うときだけ押せる。押した直後の約3秒と、通信中は押せない。
     var canDraw: Bool { session?.status == .active && !busy && !drawCooling && remaining > 0 }
+
+    var prizes: [Int] { snapshot?.prizeList ?? [] }
+    var latestPrize: Int? { prizes.last }
+    var prizeTotal: Int { snapshot?.prizeCapacity ?? BingoSnapshot.defaultPrizeTotal }
+    var prizeRemaining: Int { max(prizeTotal - prizes.count, 0) }
+
+    /// 景品は回の状態に関係なく引ける(最新の回があればよい)。押した直後の約3秒と、通信中は押せない。
+    var canDrawPrize: Bool { session != nil && !busy && !prizeCooling && prizeRemaining > 0 }
+
+    /// 1つ戻せるのは、引いた景品があるとき。
+    var canUndoPrize: Bool { session != nil && !busy && !prizes.isEmpty }
 
     // MARK: 取得
 
@@ -104,6 +116,59 @@ final class LotteryModel: ObservableObject {
             message = Messages.describe(error)
             // 通信エラーでも、サーバー側では引けているかもしれない。
             if error == .network { message! += "引けたかどうかは、番号の一覧で確かめてください。" }
+        } catch {
+            message = Messages.describe(.network)
+        }
+        await refresh()
+    }
+
+    func drawPrize() async {
+        guard canDrawPrize, let session else { return }
+        busy = true
+        prizeCooling = true
+        message = nil
+        Task {
+            try? await Task.sleep(nanoseconds: Self.drawCooldown)
+            self.prizeCooling = false
+        }
+        defer { busy = false }
+        do {
+            switch try await api.drawPrize(sessionId: session.id) {
+            case .drawn:
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            case .exhausted:
+                message = "景品は全部引き終わりました。"
+            case .notFound:
+                message = "セッションが見つかりません。画面を確かめてください。"
+            }
+        } catch let error as APIError {
+            message = Messages.describe(error)
+            // 通信エラーでも、サーバー側では引けているかもしれない。
+            if error == .network { message! += "引けたかどうかは、景品の番号で確かめてください。" }
+        } catch {
+            message = Messages.describe(.network)
+        }
+        await refresh()
+    }
+
+    /// 最後に引いた景品を1つ取り消す(押し間違い用)。
+    func undoPrize() async {
+        guard canUndoPrize, let session else { return }
+        busy = true
+        message = nil
+        defer { busy = false }
+        do {
+            switch try await api.undoPrize(sessionId: session.id) {
+            case .undone:
+                break
+            case .nothingToUndo:
+                message = "取り消せる景品がありません。"
+            case .notFound:
+                message = "セッションが見つかりません。画面を確かめてください。"
+            }
+        } catch let error as APIError {
+            message = Messages.describe(error)
+            if error == .network { message! += "取り消せたかどうかは、景品の番号で確かめてください。" }
         } catch {
             message = Messages.describe(.network)
         }

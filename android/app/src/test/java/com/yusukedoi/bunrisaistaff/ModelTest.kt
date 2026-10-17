@@ -93,6 +93,86 @@ class ModelTest {
         assertEquals(1, api.calls.count { it == "draw" })
     }
 
+    @Test fun prizeDrawShowsNumberAndBlocksDoubleTap() = runTest {
+        val api = FakeApi().apply { gate = CompletableDeferred() }
+        val m = LotteryModel(api, this)
+        m.refresh()
+        api.snapshotResult = { SnapshotResult.NotModified }   // 取得で上書きされず、引いた番号がそのまま画面に残ること
+        assertTrue(m.ui.value.canDrawPrize)
+        m.drawPrize(); m.drawPrize(); m.drawPrize()
+        runCurrent()
+        assertTrue(m.ui.value.busy)
+        assertFalse("通信中は押せない", m.ui.value.canDrawPrize)
+        assertEquals(1, api.calls.count { it == "prize:draw" })
+        api.gate!!.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(m.ui.value.busy)
+        assertEquals(37, m.ui.value.latestPrize)
+        assertNull(m.ui.value.message)
+    }
+
+    @Test fun prizeDrawWorksInAnySessionStatusButNotWithoutSession() = runTest {
+        for (status in SessionStatus.entries) {
+            val api = FakeApi().apply { snapshotResult = { SnapshotResult.Changed(snap(status), "e") } }
+            val m = LotteryModel(api, this)
+            m.refresh()
+            assertTrue(status.raw, m.ui.value.canDrawPrize)
+            m.drawPrize(); advanceUntilIdle()
+            assertEquals(status.raw, 1, api.calls.count { it == "prize:draw" })
+        }
+        val api = FakeApi().apply { snapshotResult = { SnapshotResult.Changed(snap(null), "e") } }
+        val m = LotteryModel(api, this)
+        m.refresh()
+        m.drawPrize(); advanceUntilIdle()
+        assertEquals(0, api.calls.count { it == "prize:draw" })
+    }
+
+    @Test fun prizeExhaustedDisablesButton() = runTest {
+        val api = FakeApi().apply { snapshotResult = { SnapshotResult.Changed(snap(prizes = (1..81).toList()), "e") } }
+        val m = LotteryModel(api, this)
+        m.refresh()
+        assertEquals(0, m.ui.value.prizeRemaining)
+        assertFalse(m.ui.value.canDrawPrize)
+        m.drawPrize(); advanceUntilIdle()
+        assertEquals(0, api.calls.count { it == "prize:draw" })
+        // サーバーが先に尽きていたとき
+        val api2 = FakeApi().apply { prizeResult = { PrizeOutcome.Exhausted } }
+        val m2 = LotteryModel(api2, this)
+        m2.refresh()
+        m2.drawPrize(); advanceUntilIdle()
+        assertEquals("景品は全部引き終わりました。", m2.ui.value.message)
+    }
+
+    @Test fun prizeNetworkErrorAddsHintAndDoesNotRetry() = runTest {
+        val api = FakeApi().apply { prizeResult = { throw net() } }
+        val m = LotteryModel(api, this)
+        m.refresh()
+        m.drawPrize(); advanceUntilIdle()
+        assertTrue(m.ui.value.message!!.contains("引けたかどうかは"))
+        assertEquals(1, api.calls.count { it == "prize:draw" })
+        assertFalse(m.ui.value.busy)
+    }
+
+    @Test fun prizeUndoRemovesLastAndNeedsPrizes() = runTest {
+        val api = FakeApi().apply { snapshotResult = { SnapshotResult.Changed(snap(prizes = listOf(5, 12, 37)), "e") } }
+        val m = LotteryModel(api, this)
+        m.refresh()
+        api.snapshotResult = { SnapshotResult.NotModified }
+        assertEquals(37, m.ui.value.latestPrize)
+        assertTrue(m.ui.value.canUndoPrize)
+        m.undoPrize(); advanceUntilIdle()
+        assertEquals(1, api.calls.count { it == "prize:undo" })
+        assertEquals(listOf(5, 12), m.ui.value.prizes)
+        assertNull(m.ui.value.message)
+
+        val empty = FakeApi()
+        val m2 = LotteryModel(empty, this)
+        m2.refresh()
+        assertFalse(m2.ui.value.canUndoPrize)
+        m2.undoPrize(); advanceUntilIdle()
+        assertEquals(0, empty.calls.count { it == "prize:undo" })
+    }
+
     @Test fun refreshKeepsEtagAndIgnoresOlderSnapshots() = runTest {
         val api = FakeApi()
         val m = LotteryModel(api, this)

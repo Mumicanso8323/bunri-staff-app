@@ -40,6 +40,7 @@ fun LotteryScreen(model: LotteryModel) {
     var confirmFinish by remember { mutableStateOf(false) }
     var confirmRebuild by remember { mutableStateOf(false) }
     var confirmReopen by remember { mutableStateOf(false) }
+    var confirmUndoPrize by remember { mutableStateOf(false) }
 
     PollWhileVisible { model.refresh() }
 
@@ -55,6 +56,7 @@ fun LotteryScreen(model: LotteryModel) {
             StatusCard(ui)
             LatestNumber(ui)
             MainControls(ui, model, onReopen = { confirmReopen = true })
+            PrizeSection(ui, model, onUndo = { confirmUndoPrize = true })
             NumberGrid(ui.draws)
             DangerZone(ui, onFinish = { confirmFinish = true }, onRebuild = { confirmRebuild = true })
         }
@@ -81,6 +83,15 @@ fun LotteryScreen(model: LotteryModel) {
         onConfirm = { ui.session?.let(model::reopen) },
         onDismiss = { confirmReopen = false },
     )
+    if (confirmUndoPrize) ui.latestPrize?.let { last ->
+        ConfirmDialog(
+            title = "景品を1つ戻しますか?",
+            message = "最後に引いた景品 No.$last を取り消しますか?",
+            confirmLabel = "取り消す", destructive = true,
+            onConfirm = { model.undoPrize() },
+            onDismiss = { confirmUndoPrize = false },
+        )
+    }
 }
 
 private fun statusColor(s: SessionStatus): Color = when (s) {
@@ -162,6 +173,33 @@ private fun MainControls(ui: LotteryUi, model: LotteryModel, onReopen: () -> Uni
         SessionStatus.FINISHED -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             BigButton("新しいセッション", StaffColors.Blue, enabled = !ui.busy) { model.createSession() }
             TextButton(onClick = onReopen, enabled = !ui.busy) { Text("終了を取り消す(同じセッションを再開)", fontSize = 15.sp) }
+        }
+    }
+}
+
+/** 景品抽選。番号を引くのとは独立で、回があれば状態に関係なく押せる。 */
+@Composable
+private fun PrizeSection(ui: LotteryUi, model: LotteryModel, onUndo: () -> Unit) {
+    if (ui.session == null) return
+    Panel {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("景品抽選", fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
+            val n = ui.latestPrize
+            if (n != null) {
+                Text("景品 No.$n", fontSize = 44.sp, fontWeight = FontWeight.Black, lineHeight = 52.sp)
+            } else {
+                Text("まだ景品を引いていません", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("引いた数 ${ui.prizes.size} / ${ui.prizeTotal}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (ui.prizes.size > 1) {
+                Text(
+                    "最近:" + ui.prizes.asReversed().take(5).joinToString("、") { "No.$it" },
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+                )
+            }
+            if (ui.prizeRemaining == 0) Text("景品は全部引き終わりました", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = StaffColors.Green)
+            BigButton("景品を引く", StaffColors.Orange, enabled = ui.canDrawPrize, minHeight = 80) { model.drawPrize() }
+            TextButton(onClick = onUndo, enabled = ui.canUndoPrize) { Text("1つ戻す", fontSize = 14.sp) }
         }
     }
 }

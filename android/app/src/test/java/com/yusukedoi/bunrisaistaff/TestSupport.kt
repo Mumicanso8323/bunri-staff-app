@@ -4,8 +4,8 @@ import kotlinx.coroutines.CompletableDeferred
 
 fun session(status: SessionStatus = SessionStatus.ACTIVE) = BingoSession("s-12345678-abc", status, "2026-10-18T05:00:00.000Z")
 
-fun snap(status: SessionStatus? = SessionStatus.ACTIVE, draws: List<Int> = emptyList(), updatedAt: Double = 1.0) =
-    BingoSnapshot(status?.let { session(it) }, draws, 5, 1, updatedAt)
+fun snap(status: SessionStatus? = SessionStatus.ACTIVE, draws: List<Int> = emptyList(), updatedAt: Double = 1.0, prizes: List<Int> = emptyList()) =
+    BingoSnapshot(status?.let { session(it) }, draws, 5, 1, updatedAt, prizes)
 
 fun player(bingo: Boolean = true, claimed: Boolean = false, latest: Boolean = true, claimedAt: String? = null) = PlayerView(
     "123e4567-e89b-12d3-a456-426614174000", "s-12345678-abc", SessionStatus.ACTIVE, latest, bingo, claimed, claimedAt,
@@ -23,6 +23,8 @@ class FakeApi : StaffApi {
     var tournamentResult: () -> TournamentSnapshotResult = { TournamentSnapshotResult.Changed(tsnap(), "t1") }
     var tournamentOpResult: (Map<String, Any?>) -> TournamentSnapshot = { tsnap(2) }
     var drawResult: () -> DrawOutcome = { DrawOutcome.Drawn(DrawResult(7, 68, 7)) }
+    var prizeResult: () -> PrizeOutcome = { PrizeOutcome.Drawn(DrawResult(37, 80, 1)) }
+    var undoPrizeResult: () -> PrizeUndoOutcome = { PrizeUndoOutcome.Undone(37) }
     var playerResult: () -> PlayerLookup = { PlayerLookup.Found(player()) }
     var claimResult: () -> ClaimOutcome = { ClaimOutcome.Claimed(player(claimed = true)) }
     var statusError: ApiException? = null
@@ -39,6 +41,8 @@ class FakeApi : StaffApi {
     override suspend fun createSession() { calls += "create"; gate?.await(); statusError?.let { throw it } }
     override suspend fun setStatus(sessionId: String, status: SessionStatus) { calls += "status:${status.raw}"; gate?.await(); statusError?.let { throw it } }
     override suspend fun draw(sessionId: String): DrawOutcome { calls += "draw"; gate?.await(); return drawResult() }
+    override suspend fun drawPrize(sessionId: String): PrizeOutcome { calls += "prize:draw"; gate?.await(); return prizeResult() }
+    override suspend fun undoPrize(sessionId: String): PrizeUndoOutcome { calls += "prize:undo"; gate?.await(); return undoPrizeResult() }
     override suspend fun player(guestId: String): PlayerLookup { calls += "player"; return playerResult() }
     override suspend fun claim(guestId: String, sessionId: String): ClaimOutcome { calls += "claim"; gate?.await(); return claimResult() }
 }

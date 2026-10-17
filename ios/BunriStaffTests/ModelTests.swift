@@ -78,6 +78,42 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(model.phase, before)
     }
 
+    @MainActor func testPrizeDrawDoubleTapDrawsOnceAndUndoIsAllowedAfter() async {
+        var prizeDraws = 0
+        var prizeUndos = 0
+        var prizes = "[]"
+        MockURLProtocol.handler = { [self] request in
+            switch request.url!.path {
+            case "/api/admin/login": return reply(303, "", login)
+            case "/api/admin/bingo/prize":
+                if request.bodyString.contains(#""action":"undo""#) {
+                    prizeUndos += 1
+                    prizes = "[]"
+                    return reply(200, #"{"undone":37}"#)
+                }
+                prizeDraws += 1
+                prizes = "[37]"
+                return reply(200, #"{"number":37,"remaining":80,"totalDrawn":1}"#)
+            default:
+                return reply(200, #"{"session":{"id":"S1","status":"waiting","created_at":"x"},"draws":[],"playerCount":0,"bingoCount":0,"updatedAt":1,"prizes":\#(prizes),"prizeTotal":81}"#, ["ETag": "W/\"\(prizes)\""])
+            }
+        }
+        let model = LotteryModel(api: makeAPI())
+        await model.refresh()
+        XCTAssertTrue(model.canDrawPrize, "待機中でも景品は引ける")
+        XCTAssertFalse(model.canUndoPrize)
+        await model.drawPrize()
+        XCTAssertEqual(model.latestPrize, 37)
+        XCTAssertEqual(model.prizeRemaining, 80)
+        XCTAssertFalse(model.canDrawPrize, "押した直後は押せない")
+        await model.drawPrize()
+        XCTAssertEqual(prizeDraws, 1)
+        XCTAssertTrue(model.canUndoPrize)
+        await model.undoPrize()
+        XCTAssertEqual(prizeUndos, 1)
+        XCTAssertNil(model.latestPrize)
+    }
+
     @MainActor func testDrawIsBlockedWhileCoolingAndDoubleTapDrawsOnce() async {
         var draws = 0
         MockURLProtocol.handler = { [self] request in

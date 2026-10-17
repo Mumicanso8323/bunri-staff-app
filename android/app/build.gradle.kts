@@ -15,8 +15,8 @@ android {
         applicationId = "com.yusukedoi.bunrisaistaff"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
         // 管理者パスワード(UTF-8 の 16 進)。ビルド時の環境変数だけから入る。ソースには無い。
         val hex = System.getenv("BUNRI_ADMIN_PASSWORD_HEX") ?: ""
         buildConfigField("String", "ADMIN_PASSWORD_HEX", "\"$hex\"")

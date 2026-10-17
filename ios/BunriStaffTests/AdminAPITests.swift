@@ -235,6 +235,76 @@ final class AdminAPITests: XCTestCase {
         XCTAssertEqual(log.last, "PATCH /api/admin/bingo/session")
     }
 
+    // MARK: 景品抽選(prize)
+
+    func testSnapshotWithoutPrizesFieldsDecodesAsEmptyAnd81() async throws {
+        route { _, _ in self.json(200, #"{"session":{"id":"S1","status":"active","created_at":"x"},"draws":[5],"playerCount":0,"bingoCount":0,"updatedAt":1}"#) }
+        guard case .changed(let s, _) = try await makeAPI().snapshot(etag: nil) else { return XCTFail() }
+        XCTAssertNil(s.prizes)
+        XCTAssertEqual(s.prizeList, [])
+        XCTAssertEqual(s.prizeCapacity, 81)
+    }
+
+    func testSnapshotWithPrizesFields() async throws {
+        route { _, _ in self.json(200, #"{"session":{"id":"S1","status":"waiting","created_at":"x"},"draws":[],"playerCount":0,"bingoCount":0,"updatedAt":1,"prizes":[37,5],"prizeTotal":81}"#) }
+        guard case .changed(let s, _) = try await makeAPI().snapshot(etag: nil) else { return XCTFail() }
+        XCTAssertEqual(s.prizeList, [37, 5])
+        XCTAssertEqual(s.prizeCapacity, 81)
+    }
+
+    func testDrawPrizeSendsActionDrawAndDecodes() async throws {
+        var sent = ""
+        route { key, request in
+            if key.hasSuffix("/login") { return self.loginOK() }
+            sent = request.bodyString
+            return self.json(200, #"{"number":37,"remaining":80,"totalDrawn":1}"#)
+        }
+        let outcome = try await makeAPI().drawPrize(sessionId: "S1")
+        XCTAssertEqual(outcome, .drawn(DrawResult(number: 37, remaining: 80, totalDrawn: 1)))
+        XCTAssertTrue(sent.contains(#""action":"draw""#) && sent.contains(#""sessionId":"S1""#), sent)
+        XCTAssertEqual(log.last, "POST /api/admin/bingo/prize")
+    }
+
+    func testUndoPrizeSendsActionUndoAndDecodes() async throws {
+        var sent = ""
+        var reply = #"{"undone":37}"#
+        route { key, request in
+            if key.hasSuffix("/login") { return self.loginOK() }
+            sent = request.bodyString
+            return self.json(200, reply)
+        }
+        let api = makeAPI()
+        let first = try await api.undoPrize(sessionId: "S1")
+        XCTAssertEqual(first, .undone(37))
+        XCTAssertTrue(sent.contains(#""action":"undo""#) && sent.contains(#""sessionId":"S1""#), sent)
+        XCTAssertEqual(log.last, "POST /api/admin/bingo/prize")
+        reply = #"{"undone":null}"#
+        let second = try await api.undoPrize(sessionId: "S1")
+        XCTAssertEqual(second, .nothingToUndo)
+    }
+
+    func testPrizeOutcomes() async throws {
+        let cases: [(Int, String, PrizeOutcome)] = [
+            (400, #"{"error":"All prizes have been drawn","remaining":0}"#, .exhausted),
+            (404, #"{"error":"not_found"}"#, .notFound),
+        ]
+        for (status, body, expected) in cases {
+            route { key, _ in key.hasSuffix("/login") ? self.loginOK() : self.json(status, body) }
+            let outcome = try await makeAPI().drawPrize(sessionId: "S1")
+            XCTAssertEqual(outcome, expected, "status \(status)")
+        }
+    }
+
+    func testPrizeServerErrorThrows() async {
+        route { key, _ in key.hasSuffix("/login") ? self.loginOK() : self.json(500, "oops") }
+        do {
+            _ = try await makeAPI().drawPrize(sessionId: "S1")
+            XCTFail("should throw")
+        } catch {
+            XCTAssertEqual(error as? APIError, .server(status: 500, code: nil))
+        }
+    }
+
     // MARK: 景品
 
     func testClaimSuccess() async throws {

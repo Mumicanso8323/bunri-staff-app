@@ -175,6 +175,19 @@ class AdminApiTest {
         assertEquals(ApiError.Server(503, null), errorOf { api().snapshot(null) })
     }
 
+    @Test fun snapshotDecodesPrizesAndDefaultsWhenMissing() = runBlocking {
+        server.enqueue(json(200, """{"session":{"id":"s1","status":"waiting","created_at":"c"},"draws":[],"playerCount":0,"bingoCount":0,"updatedAt":2,"prizes":[37,5],"prizeTotal":81}"""))
+        val withPrizes = (api().snapshot(null) as SnapshotResult.Changed).snapshot
+        assertEquals(listOf(37, 5), withPrizes.prizes)
+        assertEquals(81, withPrizes.prizeTotal)
+        // 古いサーバーには prizes・prizeTotal が無い(snapJson は無い形)
+        server.enqueue(json(200, snapJson))
+        val old = (api().snapshot(null) as SnapshotResult.Changed).snapshot
+        assertTrue(old.prizes.isEmpty())
+        assertEquals(81, old.prizeTotal)
+        assertEquals(listOf(5, 70), old.draws)
+    }
+
     // endregion
 
     // region 抽選
@@ -192,6 +205,57 @@ class AdminApiTest {
         try { a.draw("s"); fail() } catch (e: ApiException) { assertEquals(ApiError.Server(400, "sessionId is required"), e.error) }
         server.enqueue(json(500, "oops"))
         try { a.draw("s"); fail() } catch (e: ApiException) { assertEquals(ApiError.Server(500, null), e.error) }
+    }
+
+    // endregion
+
+    // region 景品抽選
+
+    @Test fun prizeDrawAndUndoSendActionInBody() = runBlocking {
+        server.enqueue(loginOk("pp"))
+        val a = api()
+        server.enqueue(json(200, """{"number":37,"remaining":80,"totalDrawn":1}"""))
+        assertEquals(PrizeOutcome.Drawn(DrawResult(37, 80, 1)), a.drawPrize("s1"))
+        next()
+        val draw = next()
+        assertEquals("POST", draw.method)
+        assertEquals("/api/admin/bingo/prize", draw.path)
+        assertEquals("admin_token=pp", draw.getHeader("Cookie"))
+        assertTrue(draw.getHeader("Content-Type")!!.startsWith("application/json"))
+        val drawBody = JSONObject(draw.body.readUtf8())
+        assertEquals("s1", drawBody.getString("sessionId")); assertEquals("draw", drawBody.getString("action"))
+
+        server.enqueue(json(200, """{"undone":37}"""))
+        assertEquals(PrizeUndoOutcome.Undone(37), a.undoPrize("s1"))
+        val undo = next()
+        assertEquals("/api/admin/bingo/prize", undo.path)
+        val undoBody = JSONObject(undo.body.readUtf8())
+        assertEquals("s1", undoBody.getString("sessionId")); assertEquals("undo", undoBody.getString("action"))
+
+        server.enqueue(json(200, """{"undone":null}"""))
+        assertEquals(PrizeUndoOutcome.Undone(null), a.undoPrize("s1"))
+    }
+
+    @Test fun prizeOutcomes() = runBlocking {
+        server.enqueue(loginOk())
+        val a = api()
+        server.enqueue(json(400, """{"error":"All prizes have been drawn","remaining":0}"""))
+        assertEquals(PrizeOutcome.Exhausted, a.drawPrize("s"))
+        server.enqueue(json(404, """{"error":"not_found"}"""))
+        assertEquals(PrizeOutcome.NotFound, a.drawPrize("s"))
+        server.enqueue(json(404, """{"error":"not_found"}"""))
+        assertEquals(PrizeUndoOutcome.NotFound, a.undoPrize("s"))
+        server.enqueue(json(400, """{"error":"sessionId is required"}"""))
+        try { a.drawPrize("s"); fail() } catch (e: ApiException) { assertEquals(ApiError.Server(400, "sessionId is required"), e.error) }
+        server.enqueue(json(500, "oops"))
+        try { a.undoPrize("s"); fail() } catch (e: ApiException) { assertEquals(ApiError.Server(500, null), e.error) }
+    }
+
+    @Test fun networkErrorOnPrizeDrawIsNotRetried() {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        assertEquals(ApiError.Network, errorOf { api().drawPrize("s") })
+        assertEquals("ログイン1回+引く1回だけ", 2, server.requestCount)
     }
 
     // endregion

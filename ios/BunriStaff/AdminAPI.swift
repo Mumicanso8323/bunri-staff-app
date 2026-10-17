@@ -27,6 +27,18 @@ enum DrawOutcome: Equatable {
     case notFound
 }
 
+enum PrizeOutcome: Equatable {
+    case drawn(DrawResult)
+    case exhausted           // 400 + remaining 0: 景品をすべて引いた
+    case notFound
+}
+
+enum PrizeUndoOutcome: Equatable {
+    case undone(Int)
+    case nothingToUndo       // undone が null
+    case notFound
+}
+
 enum PlayerLookup: Equatable {
     case found(PlayerView)
     case notFound
@@ -186,6 +198,7 @@ actor AdminAPI {
     private struct ErrorBody: Decodable {
         let error: String?
         let player: PlayerView?
+        let remaining: Int?
     }
 
     private func errorBody(_ data: Data) -> ErrorBody? { try? JSONDecoder().decode(ErrorBody.self, from: data) }
@@ -254,6 +267,34 @@ actor AdminAPI {
         case 404: return .notFound
         case 409: return .notActive
         case 400 where (errorBody(data)?.error ?? "").contains("75"): return .exhausted
+        default: throw fail(response, data)
+        }
+    }
+
+    /// 景品を1つ引く(`POST api/admin/bingo/prize`)。回の状態(待機中・進行中・終了)には関係なく引ける。
+    func drawPrize(sessionId: String) async throws -> PrizeOutcome {
+        let (data, response) = try await authed {
+            json("POST", "api/admin/bingo/prize", body: ["sessionId": sessionId, "action": "draw"])
+        }
+        switch response.statusCode {
+        case 200: return .drawn(try decode(DrawResult.self, data))
+        case 404: return .notFound
+        case 400 where errorBody(data)?.remaining == 0: return .exhausted
+        default: throw fail(response, data)
+        }
+    }
+
+    /// 最後に引いた景品を1つ取り消す(押し間違い用)。
+    func undoPrize(sessionId: String) async throws -> PrizeUndoOutcome {
+        let (data, response) = try await authed {
+            json("POST", "api/admin/bingo/prize", body: ["sessionId": sessionId, "action": "undo"])
+        }
+        switch response.statusCode {
+        case 200:
+            struct Body: Decodable { let undone: Int? }
+            if let number = try decode(Body.self, data).undone { return .undone(number) }
+            return .nothingToUndo
+        case 404: return .notFound
         default: throw fail(response, data)
         }
     }

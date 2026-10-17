@@ -6,6 +6,7 @@ struct LotteryView: View {
     @State private var confirmFinish = false
     @State private var confirmRebuild = false
     @State private var confirmReopen = false
+    @State private var confirmUndoPrize = false
 
     var body: some View {
         ScrollView {
@@ -20,6 +21,7 @@ struct LotteryView: View {
                     statusCard
                     latestNumber
                     mainControls
+                    prizeSection
                     NumberGrid(draws: model.draws)
                     dangerZone
                 }
@@ -52,6 +54,12 @@ struct LotteryView: View {
             Button("やめる", role: .cancel) {}
         } message: {
             Text("同じセッションを進行中に戻します。引いた番号と参加者はそのままです。")
+        }
+        .confirmationDialog(prizeUndoTitle, isPresented: $confirmUndoPrize, titleVisibility: .visible) {
+            Button("取り消す", role: .destructive) { Task { await model.undoPrize() } }
+            Button("やめる", role: .cancel) {}
+        } message: {
+            Text("取り消した景品は、もう一度引けます。")
         }
     }
 
@@ -156,6 +164,42 @@ struct LotteryView: View {
         .buttonStyle(.borderedProminent)
         .tint(color)
         .disabled(!enabled || model.busy)
+    }
+
+    private var prizeUndoTitle: String {
+        "最後に引いた景品 No.\(model.latestPrize ?? 0) を取り消しますか?"
+    }
+
+    /// 景品抽選。ボタンを押すと会場のスクリーンでルーレットが回る。番号の抽選とは別で、回の状態に関係なく引ける。
+    private var prizeSection: some View {
+        VStack(spacing: 12) {
+            Text("景品抽選").font(.headline).frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 4) {
+                if let n = model.latestPrize {
+                    Text("景品 No.\(n)").font(.system(size: 52, weight: .black, design: .rounded))
+                        .contentTransition(.numericText())
+                } else {
+                    Text("景品 No.?").font(.system(size: 52, weight: .black, design: .rounded)).foregroundStyle(.tertiary)
+                }
+                Text("引いた数 \(model.prizes.count)/\(model.prizeTotal)").font(.footnote).foregroundStyle(.secondary)
+                if model.prizes.count > 1 {
+                    Text("最近: " + model.prizes.suffix(6).reversed().map { "No.\($0)" }.joined(separator: "、"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .animation(.spring, value: model.latestPrize)
+            if model.prizeRemaining == 0 {
+                Text("景品は全部引き終わりました").font(.subheadline.bold()).foregroundStyle(.orange)
+            }
+            bigButton(model.prizeCooling ? "少し待ってください…" : "景品を引く",
+                      color: .orange, enabled: model.canDrawPrize, height: 80) { Task { await model.drawPrize() } }
+            Button("1つ戻す") { confirmUndoPrize = true }
+                .font(.subheadline)
+                .disabled(!model.canUndoPrize)
+        }
+        .padding(16)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 14))
     }
 
     /// 取り違えないよう、開始・引くボタンから離し、最下部に置く。
